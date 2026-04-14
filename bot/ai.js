@@ -154,7 +154,7 @@ function buildDynamicSystemPrompt(teamMembers = [], kbFacts = [], openTasks = []
   return prompt;
 }
 
-const TASK_TOOLS = [{
+const AGENT_TOOLS = [{
   functionDeclarations: [
     {
       name: "create_task",
@@ -180,6 +180,28 @@ const TASK_TOOLS = [{
         },
         required: ["task_id", "status"]
       }
+    },
+    {
+      name: "add_to_knowledge_base",
+      description: "Appends a new permanent fact or rule to the organizational knowledge base.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          fact: { type: "STRING", description: "The complete sentence describing the rule or fact." }
+        },
+        required: ["fact"]
+      }
+    },
+    {
+      name: "delete_from_knowledge_base",
+      description: "Deletes an obsolete or incorrect fact from the knowledge base using its ID.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          uuid: { type: "STRING", description: "The UUID of the fact to delete" }
+        },
+        required: ["uuid"]
+      }
     }
   ]
 }];
@@ -188,7 +210,7 @@ async function executeAgenticLoop(content, systemPrompt) {
   const modelConfig = { 
     model: MODEL,
     systemInstruction: systemPrompt,
-    tools: TASK_TOOLS
+    tools: AGENT_TOOLS
   };
 
   const model = genAI.getGenerativeModel(modelConfig);
@@ -212,6 +234,18 @@ async function executeAgenticLoop(content, systemPrompt) {
         const updated = await db.updateTaskStatus(task_id, status);
         functionResponses.push({
           functionResponse: { name: 'update_task_status', response: { success: !!updated } }
+        });
+      } else if (call.name === 'add_to_knowledge_base') {
+        const { fact } = call.args;
+        const added = await db.addKnowledgeFacts([fact], 'agent');
+        functionResponses.push({
+          functionResponse: { name: 'add_to_knowledge_base', response: { success: !!(added && added.length) } }
+        });
+      } else if (call.name === 'delete_from_knowledge_base') {
+        const { uuid } = call.args;
+        const deleted = await db.deleteKnowledgeFact(uuid);
+        functionResponses.push({
+          functionResponse: { name: 'delete_from_knowledge_base', response: { success: !!deleted } }
         });
       }
     }

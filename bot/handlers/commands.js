@@ -1,6 +1,6 @@
 'use strict';
 
-const { Composer } = require('grammy');
+const { Composer, InlineKeyboard } = require('grammy');
 const db = require('../db');
 const ai = require('../ai');
 const {
@@ -480,6 +480,85 @@ composer.command('forget', async (ctx) => {
   } else {
     await ctx.reply(`Failed to delete. Make sure you provided the exact ID from /memory.`);
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMMAND CENTER (/menu & callbacks)
+// ─────────────────────────────────────────────────────────────────────────────
+
+composer.command('menu', async (ctx) => {
+  const menu = new InlineKeyboard()
+    .text('📊 Open Tasks', 'menu_opentasks').row()
+    .text('🧠 Knowledge Base', 'menu_kb').row()
+    .text('🤖 Toggle Autonomous', 'menu_autonomous').row()
+    .text('🌅 Toggle Daily Summary', 'menu_daily').row()
+    .text('➕ Add Task', 'menu_add_task').text('📚 Teach', 'menu_teach');
+
+  await ctx.reply('🎛 *RevIQ Command Center*\nSelect an action or use AI natural language.', {
+    reply_markup: menu,
+    parse_mode: 'Markdown'
+  });
+});
+
+composer.callbackQuery('menu_opentasks', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  // Mimic the logic of /opentasks
+  const tasks = await db.getAllOpenTasks();
+  if (!tasks.length) {
+    return ctx.reply('No open tasks. Enjoy it while it lasts.');
+  }
+  const response = formatTasksByAssignee(tasks);
+  await sendChunked(ctx, `*Current Open Tasks*\n\n${response}`);
+});
+
+composer.callbackQuery('menu_kb', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  // Mimic the logic of /kb
+  const facts = await db.getKnowledgeBase();
+  if (!facts || facts.length === 0) {
+    return ctx.reply('The Knowledge Base is currently empty. Use /teach to add facts.');
+  }
+
+  let text = '🧠 *Permanent Knowledge Base*\n\n';
+  facts.forEach((f, i) => {
+    text += `*${i + 1}.* ${f.fact}\n`;
+    text += `   ↳ _ID: ${f.id}_\n\n`;
+  });
+  text += '_(To remove a fact, type /forget [ID])_';
+
+  await sendChunked(ctx, text);
+});
+
+composer.callbackQuery('menu_autonomous', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  if (ctx.bot?.autonomousState) {
+    ctx.bot.autonomousState.enabled = !ctx.bot.autonomousState.enabled;
+    const status = ctx.bot.autonomousState.enabled ? 'ON ⚡' : 'OFF 🤫';
+    await ctx.reply(`Autonomous Mode is now: *${status}*`, { parse_mode: 'Markdown' });
+  } else {
+    await ctx.reply('Autonomous state is not mounted on this runtime.');
+  }
+});
+
+composer.callbackQuery('menu_daily', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  if (ctx.bot?.autonomousState) {
+    ctx.bot.autonomousState.dailyEnabled = !ctx.bot.autonomousState.dailyEnabled;
+    const status = ctx.bot.autonomousState.dailyEnabled ? 'ON 🌅' : 'OFF 🔕';
+    await ctx.reply(`Daily Morning Summary is now: *${status}*`, { parse_mode: 'Markdown' });
+  } else {
+    await ctx.reply('Autonomous state is not mounted on this runtime.');
+  }
+});
+
+composer.callbackQuery('menu_add_task', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply('To add a task, directly talk to the AI:\n_"@RevIQ_AiBot add a high priority task for Alec to update the dashboard"_', { parse_mode: 'Markdown' });
+});
+
+composer.callbackQuery('menu_teach', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply('To update the permanent brain, attach a document or write a caption with `/teach`, or explicitly tell the AI:\n_"@RevIQ_AiBot learn that our new pricing model is $499"_', { parse_mode: 'Markdown' });
 });
 
 module.exports = composer;
