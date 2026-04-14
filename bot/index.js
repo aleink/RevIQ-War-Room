@@ -313,7 +313,8 @@ async function launch() {
     app.listen(PORT, '0.0.0.0', async () => {
       console.log(`[bot] Express server listening on port ${PORT}`);
 
-      const fullWebhookUrl = `${WEBHOOK_URL}${webhookPath}`;
+      const safeWebhookUrl = WEBHOOK_URL.startsWith('http') ? WEBHOOK_URL : `https://${WEBHOOK_URL}`;
+      const fullWebhookUrl = `${safeWebhookUrl}${webhookPath}`;
       try {
         await bot.api.setWebhook(fullWebhookUrl);
         console.log(`[bot] Webhook registered: ${fullWebhookUrl}`);
