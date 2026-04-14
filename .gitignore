@@ -1,0 +1,27 @@
+# ── Secrets ───────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Node ──────────────────────────────────────
+node_modules/
+npm-debug.log*
+
+# ── Next.js ───────────────────────────────────
+web/.next/
+web/out/
+web/node_modules/
+
+# ── OS ────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Editor ────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Build artifacts ───────────────────────────
+dist/
+build/
