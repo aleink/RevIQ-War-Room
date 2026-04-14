@@ -45,7 +45,7 @@ async function saveMessage(msg) {
  * Get recent messages, optionally filtered by a keyword (full-text search).
  * Returns up to `limit` rows, newest first.
  */
-async function getRecentMessages(limit = 30, keyword = null) {
+async function getRecentMessages(limit = 500, keyword = null) {
   let query = supabase
     .from('messages')
     .select('*')

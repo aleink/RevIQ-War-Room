@@ -29,6 +29,24 @@ Rules:
 - Use plain English. Write like a human teammate texting, not an AI assistant.`;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Format Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function formatTime(isoStr) {
+  try {
+    const d = new Date(isoStr);
+    return d.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  } catch (e) {
+    return isoStr;
+  }
+}
+
+function formatMessageContext(messages) {
+  if (!messages || !messages.length) return '(no messages)';
+  return messages.map((m) => `[${m.sender_name} at ${formatTime(m.created_at)}]: ${m.text || '[file]'}`).join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Autonomous evaluation prompt
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -41,9 +59,7 @@ function buildAutonomousPrompt(recentMessages, openTasks, recentDecisions) {
     ? recentDecisions.map((d) => `- ${d.decision} (by ${d.decided_by})`).join('\n')
     : 'No recent decisions.';
 
-  const messagesBlock = recentMessages.length
-    ? recentMessages.map((m) => `[${m.sender_name}]: ${m.text || '[file]'}`).join('\n')
-    : '(no messages)';
+  const messagesBlock = formatMessageContext(recentMessages);
 
   return `You are monitoring a startup team's group chat. Review these recent messages along with the team's current open tasks and recent decisions provided below.
 
@@ -113,9 +129,7 @@ async function callClaude(userMessage, systemPrompt = CO_FOUNDER_SYSTEM_PROMPT, 
  */
 async function askClaude(userQuestion, contextMessages = []) {
   const contextBlock = contextMessages.length
-    ? `\n\n=== RECENT CONVERSATION CONTEXT ===\n${contextMessages
-        .map((m) => `[${m.sender_name}]: ${m.text || '[file]'}`)
-        .join('\n')}`
+    ? `\n\n=== RECENT CONVERSATION CONTEXT (Chronological - Last ${contextMessages.length} messages) ===\nCurrent Time: ${formatTime(new Date().toISOString())}\n\n${formatMessageContext(contextMessages)}`
     : '';
 
   const prompt = `${userQuestion}${contextBlock}`;
@@ -128,9 +142,7 @@ async function askClaude(userQuestion, contextMessages = []) {
  */
 async function extractTasks(messages, teamMembers) {
   const teamList = teamMembers.map((m) => m.name).join(', ');
-  const messagesText = messages
-    .map((m) => `[${m.sender_name}]: ${m.text || '[non-text message]'}`)
-    .join('\n');
+  const messagesText = formatMessageContext(messages);
 
   const prompt = `Extract every action item from these Telegram messages. Team members: ${teamList}.
 
@@ -179,9 +191,7 @@ Reply with ONLY the tag. Nothing else.`;
  * Generate a recap summary.
  */
 async function generateRecap(messages, tasks, decisions, period = '24 hours') {
-  const messagesText = messages
-    .map((m) => `[${m.sender_name}]: ${m.text || '[file]'}`)
-    .join('\n');
+  const messagesText = formatMessageContext(messages);
 
   const tasksText = tasks.length
     ? tasks.map((t) => `- ${t.title} → ${t.assigned_to} [${t.status}]`).join('\n')
@@ -213,9 +223,7 @@ Be concise. Use bullet points. Write like a team member, not a report generator.
  */
 async function generateWeeklyRecap(messages, tasks, decisions, teamMembers) {
   const teamNames = teamMembers.map((m) => m.name);
-  const messagesText = messages
-    .map((m) => `[${m.sender_name}]: ${m.text || '[file]'}`)
-    .join('\n');
+  const messagesText = formatMessageContext(messages);
 
   const prompt = `Generate a structured weekly recap for this startup team.
 
