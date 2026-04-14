@@ -87,7 +87,7 @@ composer.command('ask', async (ctx) => {
   const question = ctx.message.text.replace(/^\/ask\s*/i, '').trim();
   if (!question) return ctx.reply('What do you want to know? Usage: /ask [question]');
 
-  const [context] = await Promise.all([db.getRecentMessages(30)]);
+  const [context] = await Promise.all([db.getRecentMessages(2000)]);
   const response = await ai.askGemini(question, context);
   if (response) await sendChunked(ctx, response);
 });

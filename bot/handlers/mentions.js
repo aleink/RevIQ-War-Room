@@ -40,7 +40,7 @@ composer.on('message', async (ctx) => {
   }
 
   // Pull context and ask Claude
-  const context = await db.getRecentMessages(30);
+  const context = await db.getRecentMessages(2000);
   const response = await ai.askGemini(question, context);
 
   if (response) {
