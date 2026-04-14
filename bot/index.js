@@ -18,7 +18,7 @@ const { AutonomousState, setupAutonomous, onMessage, checkStaleTasks, sendDailyN
 const REQUIRED_ENV = [
   'TELEGRAM_BOT_TOKEN',
   'TEAM_CHAT_ID',
-  'ANTHROPIC_API_KEY',
+  'GEMINI_API_KEY',
   'SUPABASE_URL',
   'SUPABASE_SERVICE_KEY',
 ];
