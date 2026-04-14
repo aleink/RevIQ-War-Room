@@ -35,8 +35,14 @@ CREATE INDEX IF NOT EXISTS idx_messages_text_fts
   ON messages USING gin(to_tsvector('english', COALESCE(text, '')));
 
 -- Unique constraint so we can upsert without duplicates on bot restart
-ALTER TABLE messages
-  ADD CONSTRAINT uq_messages_telegram_msg_id UNIQUE (telegram_message_id);
+DO $$ 
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'uq_messages_telegram_msg_id'
+  ) THEN
+    ALTER TABLE messages ADD CONSTRAINT uq_messages_telegram_msg_id UNIQUE (telegram_message_id);
+  END IF;
+END $$;
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
