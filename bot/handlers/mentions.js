@@ -40,7 +40,7 @@ composer.on('message', async (ctx) => {
   }
 
   // Pull context and ask Claude
-  const context = await db.getRecentMessages(30, question);
+  const context = await db.getRecentMessages(30);
   const response = await ai.askClaude(question, context);
 
   if (response) {

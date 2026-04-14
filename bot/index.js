@@ -132,7 +132,7 @@ bot.use(async (ctx, next) => {
         console.log(`[mentions] @${BOT_USERNAME} tagged by ${msg.from?.first_name}: "${question}"`);
 
         try {
-          const context = await db.getRecentMessages(30, question);
+          const context = await db.getRecentMessages(30);
           const response = await ai.askClaude(question, context);
 
           if (response) {
