@@ -28,7 +28,7 @@ export default function QuickAdd({ teamMembers, token }: QuickAddProps) {
       status: 'open',
       priority: 'normal',
       created_by: 'Dashboard',
-    });
+    } as any);
 
     setLoading(false);
 

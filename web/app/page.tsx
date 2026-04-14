@@ -84,11 +84,11 @@ async function getInitialData() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface PageProps {
-  searchParams: { token?: string };
+  searchParams: Promise<{ token?: string }>;
 }
 
 export default async function DashboardPage({ searchParams }: PageProps) {
-  const { token } = searchParams;
+  const { token } = await searchParams;
   const expectedToken = process.env.DASHBOARD_TOKEN;
 
   if (!expectedToken || token !== expectedToken) {

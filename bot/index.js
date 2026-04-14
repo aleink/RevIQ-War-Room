@@ -6,8 +6,9 @@ const { Bot, webhookCallback } = require('grammy');
 const express = require('express');
 const cron = require('node-cron');
 const db = require('./db');
+const ai = require('./ai');
+const { chunkText } = require('./utils');
 const commands = require('./handlers/commands');
-const mentions = require('./handlers/mentions');
 const { AutonomousState, setupAutonomous, onMessage, checkStaleTasks, sendDailyNudge } = require('./handlers/autonomous');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -41,31 +42,31 @@ const WEBHOOK_URL = process.env.RAILWAY_STATIC_URL || process.env.WEBHOOK_URL;
 
 const bot = new Bot(BOT_TOKEN);
 
+// Cache bot info at module level so mention detection works reliably
+let BOT_USERNAME = null;
+let BOT_ID = null;
+
 // Attach autonomous state to the bot instance so handlers can access it via ctx.bot
 const autonomousState = new AutonomousState();
 bot.autonomousState = autonomousState;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Middleware — make autonomousState available in ctx for command handlers
+// Global middleware — inject bot reference + log every message + detect mentions
 // ─────────────────────────────────────────────────────────────────────────────
 
 bot.use(async (ctx, next) => {
   ctx.bot = bot;
-  return next();
-});
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Message logging middleware — store every group message in Supabase
-// This runs before all handlers so we never miss a message
-// ─────────────────────────────────────────────────────────────────────────────
-
-bot.on('message', async (ctx, next) => {
   const msg = ctx.message;
   if (!msg) return next();
+
+  // ── RAW DEBUG — uncomment for troubleshooting ──────────────────────────
+  // console.log(`[raw] chat=${ctx.chat?.id} text="${(msg.text||'').slice(0,60)}" match=${String(ctx.chat?.id) === String(CHAT_ID)}`);
 
   // Only process messages from the configured group chat
   if (String(ctx.chat?.id) !== String(CHAT_ID)) return next();
 
+  // ── Store every message in Supabase ────────────────────────────────────
   try {
     const from = msg.from || {};
     const senderName = [from.first_name, from.last_name].filter(Boolean).join(' ') || from.username || 'Unknown';
@@ -76,7 +77,7 @@ bot.on('message', async (ctx, next) => {
 
     if (msg.photo?.length) {
       file_type = 'photo';
-      file_id = msg.photo[msg.photo.length - 1]?.file_id; // largest size
+      file_id = msg.photo[msg.photo.length - 1]?.file_id;
     } else if (msg.document) {
       file_type = 'document';
       file_id = msg.document.file_id;
@@ -106,15 +107,62 @@ bot.on('message', async (ctx, next) => {
     console.error('[bot] Message logging error:', err.message);
   }
 
-  return next();
+  // ── Detect @mention or direct reply to bot ─────────────────────────────
+  // If this is a command, skip — let the commands handler deal with it
+  const text = msg.text || msg.caption || '';
+  const isCommand = text.startsWith('/');
+
+  if (!isCommand && BOT_USERNAME) {
+    const isMentioned = text.includes(`@${BOT_USERNAME}`);
+    const isReplyToBot = msg.reply_to_message?.from?.id === BOT_ID;
+
+    if (isMentioned || isReplyToBot) {
+        // This IS a mention/reply — handle it directly, don't pass to next()
+        const question = text
+          .replace(new RegExp(`@${BOT_USERNAME}`, 'gi'), '')
+          .trim();
+
+        if (!question) {
+          await ctx.reply("You tagged me — what do you need?", {
+            reply_to_message_id: msg.message_id,
+          });
+          return; // consumed — don't call next()
+        }
+
+        console.log(`[mentions] @${BOT_USERNAME} tagged by ${msg.from?.first_name}: "${question}"`);
+
+        try {
+          const context = await db.getRecentMessages(30, question);
+          const response = await ai.askClaude(question, context);
+
+          if (response) {
+            const chunks = chunkText(response, 4000);
+            for (const chunk of chunks) {
+              await ctx.reply(chunk, {
+                parse_mode: 'Markdown',
+                reply_to_message_id: msg.message_id,
+              });
+            }
+          }
+        } catch (err) {
+          console.error('[mentions] Error:', err.message);
+          await ctx.reply("Something went wrong on my end. Try again.", {
+            reply_to_message_id: msg.message_id,
+          });
+        }
+
+        return; // consumed — don't pass to commands
+    }
+  }
+
+  return next(); // pass to commands handler
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Register handlers
+// Register command handlers
 // ─────────────────────────────────────────────────────────────────────────────
 
 bot.use(commands);
-bot.use(mentions);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Error handling
@@ -132,7 +180,6 @@ bot.catch((err) => {
 async function catchUpMessages() {
   console.log('[bot] Fetching missed messages from Telegram...');
   try {
-    // getUpdates returns a max of 100 pending updates
     const updates = await bot.api.getUpdates({ limit: 100 });
 
     let saved = 0;
@@ -178,13 +225,11 @@ async function catchUpMessages() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function setupCronJobs() {
-  // Stale task check — runs daily at 10:00 AM
   cron.schedule('0 10 * * *', async () => {
     console.log('[cron] Running stale task check...');
     await checkStaleTasks(bot, CHAT_ID);
   });
 
-  // Daily morning nudge
   const dailyTime = process.env.DAILY_RECAP_TIME || '09:00';
   const [hour, minute] = dailyTime.split(':');
   cron.schedule(`${minute || '0'} ${hour || '9'} * * *`, async () => {
@@ -198,23 +243,68 @@ function setupCronJobs() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Register Telegram command menu (shows commands when user types "/")
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function registerCommandMenu() {
+  const commandList = [
+    { command: 'ask',         description: 'Ask a question — I\'ll use recent context' },
+    { command: 'find',        description: 'Search the message history' },
+    { command: 'todos',       description: 'Extract action items from the last 24h' },
+    { command: 'todo',        description: 'Create a task: /todo [task] @[person]' },
+    { command: 'mytasks',     description: 'See your open tasks by priority' },
+    { command: 'done',        description: 'Mark a task complete' },
+    { command: 'opentasks',   description: 'All open tasks grouped by person' },
+    { command: 'decide',      description: 'Log a decision and pin it' },
+    { command: 'recap',       description: 'Summary of the last 24 hours' },
+    { command: 'weeklyrecap', description: 'Structured 7-day recap' },
+    { command: 'tag',         description: 'Reply to a message to categorize it' },
+    { command: 'listen',      description: 'Turn on autonomous mode' },
+    { command: 'silent',      description: 'Turn off autonomous mode' },
+    { command: 'dailyon',     description: 'Enable daily morning summary' },
+    { command: 'dailyoff',    description: 'Disable daily morning summary' },
+    { command: 'help',        description: 'Show all available commands' },
+  ];
+
+  try {
+    // Register for default scope (private chats)
+    await bot.api.setMyCommands(commandList);
+    // Register for group chats specifically
+    await bot.api.setMyCommands(commandList, {
+      scope: { type: 'all_group_chats' },
+    });
+    // Register for this specific group chat
+    await bot.api.setMyCommands(commandList, {
+      scope: { type: 'all_chat_administrators' },
+    });
+    console.log('[bot] Command menu registered for all scopes');
+  } catch (err) {
+    console.warn('[bot] Failed to register command menu:', err.message);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Launch — webhook (production) or long polling (development)
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function launch() {
+  // Initialize bot info FIRST — populates ctx.me and caches username/id
+  await bot.init();
+  BOT_USERNAME = bot.botInfo.username;
+  BOT_ID = bot.botInfo.id;
+  console.log(`[bot] Initialized as @${BOT_USERNAME} (ID: ${BOT_ID})`);
+
   await catchUpMessages();
+  await registerCommandMenu();
   setupAutonomous(bot, autonomousState, CHAT_ID);
   setupCronJobs();
 
   if (IS_PRODUCTION && WEBHOOK_URL) {
-    // ── Webhook mode ──────────────────────────────────────────────────────────
     const app = express();
     app.use(express.json());
 
-    // Health check endpoint (used by Railway + Docker healthcheck)
     app.get('/health', (_req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 
-    // Telegram will POST updates here
     const webhookPath = '/telegram-webhook';
     app.post(webhookPath, webhookCallback(bot, 'express'));
 
@@ -232,10 +322,8 @@ async function launch() {
       console.log('[bot] RevIQ Command is live 🚀');
     });
   } else {
-    // ── Long polling mode (local development) ────────────────────────────────
     console.log('[bot] Starting in long polling mode (development)');
 
-    // Make sure no stale webhook is registered
     try {
       await bot.api.deleteWebhook();
     } catch (_) {

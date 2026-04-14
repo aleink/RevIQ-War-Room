@@ -256,7 +256,7 @@ small {
 .badge-low    { background: var(--surface-3);   color: var(--text-muted); }
 
 /* ── Task Age Indicators ─────────────────────────────────────────────────── */
-.task-fresh { /* default */ }
+/* .task-fresh — no extra styling needed, age indicators only apply to warn/danger */
 
 .task-warn {
   border-left: 2px solid var(--warn) !important;

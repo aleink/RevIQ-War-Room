@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import type { Database } from './database.types';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -6,11 +7,11 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 // ─────────────────────────────────────────────────────────────────────────────
 // Browser client — used by client components and Realtime subscriptions
 // ─────────────────────────────────────────────────────────────────────────────
-let browserClient: ReturnType<typeof createClient> | null = null;
+let browserClient: ReturnType<typeof createClient<Database>> | null = null;
 
 export function createBrowserClient() {
   if (browserClient) return browserClient;
-  browserClient = createClient(supabaseUrl, supabaseAnonKey, {
+  browserClient = createClient<Database>(supabaseUrl, supabaseAnonKey, {
     realtime: {
       params: { eventsPerSecond: 10 },
     },
@@ -31,7 +32,7 @@ export function createServerClient() {
   const key = serviceKey || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!key) throw new Error('Missing Supabase key');
 
-  return createClient(url, key);
+  return createClient<Database>(url, key);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,10 +83,13 @@ export interface Stats {
 
 type RealtimeCallback<T> = (payload: { new: T; old: T; eventType: string }) => void;
 
+let channelCounter = 0;
+
 export function subscribeToTasks(callback: RealtimeCallback<Task>) {
   const client = createBrowserClient();
+  const channelName = `tasks-rt-${++channelCounter}`;
   const channel = client
-    .channel('tasks-realtime')
+    .channel(channelName)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, (payload) => {
       callback({
         new: payload.new as Task,
@@ -100,8 +104,9 @@ export function subscribeToTasks(callback: RealtimeCallback<Task>) {
 
 export function subscribeToDecisions(callback: RealtimeCallback<Decision>) {
   const client = createBrowserClient();
+  const channelName = `decisions-rt-${++channelCounter}`;
   const channel = client
-    .channel('decisions-realtime')
+    .channel(channelName)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'decisions' }, (payload) => {
       callback({
         new: payload.new as Decision,

@@ -37,8 +37,7 @@ function TaskItem({ task, onDone }: { task: Task; onDone: (id: string) => void }
     if (checking) return;
     setChecking(true);
     const supabase = createBrowserClient();
-    await supabase
-      .from('tasks')
+    await (supabase.from('tasks') as any)
       .update({ status: 'done', completed_at: new Date().toISOString() })
       .eq('id', task.id);
     // onDone will be triggered by Realtime subscription
