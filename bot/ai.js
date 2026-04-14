@@ -2,6 +2,8 @@
 
 require('dotenv').config();
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const db = require('./db');
+const { formatTasksForAI } = require('./utils');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -127,7 +129,7 @@ async function callGemini(userMessage, systemPrompt = CO_FOUNDER_SYSTEM_PROMPT, 
 // Public API
 // ─────────────────────────────────────────────────────────────────────────────
 
-function buildDynamicSystemPrompt(teamMembers = [], kbFacts = []) {
+function buildDynamicSystemPrompt(teamMembers = [], kbFacts = [], openTasks = []) {
   let prompt = CO_FOUNDER_SYSTEM_PROMPT;
 
   if (teamMembers.length > 0) {
@@ -144,20 +146,95 @@ function buildDynamicSystemPrompt(teamMembers = [], kbFacts = []) {
     });
   }
 
+  if (openTasks.length > 0) {
+    prompt += '\n\n=== CURRENT OPEN TASKS ===\n';
+    prompt += formatTasksForAI(openTasks);
+  }
+
   return prompt;
+}
+
+const TASK_TOOLS = [{
+  functionDeclarations: [
+    {
+      name: "create_task",
+      description: "Create a new assigned task in the database.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          title: { type: "STRING", description: "Short, actionable title of the task" },
+          assigned_to: { type: "STRING", description: "Name of the team member to assign it to" },
+          priority: { type: "STRING", description: "high, normal, or low" }
+        },
+        required: ["title", "assigned_to", "priority"]
+      }
+    },
+    {
+      name: "update_task_status",
+      description: "Change the status of an existing task.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          task_id: { type: "STRING", description: "The UUID of the task to update" },
+          status: { type: "STRING", description: "The new status: open, in_progress, or done" }
+        },
+        required: ["task_id", "status"]
+      }
+    }
+  ]
+}];
+
+async function executeAgenticLoop(content, systemPrompt) {
+  const modelConfig = { 
+    model: MODEL,
+    systemInstruction: systemPrompt,
+    tools: TASK_TOOLS
+  };
+
+  const model = genAI.getGenerativeModel(modelConfig);
+  const chat = model.startChat();
+  
+  let result = await chat.sendMessage(content);
+  
+  if (result.response.functionCalls && typeof result.response.functionCalls === 'function' && result.response.functionCalls()) {
+    const calls = result.response.functionCalls();
+    const functionResponses = [];
+    
+    for (const call of calls) {
+      if (call.name === 'create_task') {
+        const { title, assigned_to, priority } = call.args;
+        const task = await db.createTask({ title, assigned_to, priority, created_by: 'RevIQ Agent' });
+        functionResponses.push({
+          functionResponse: { name: 'create_task', response: { success: !!task, task_id: task?.id } }
+        });
+      } else if (call.name === 'update_task_status') {
+        const { task_id, status } = call.args;
+        const updated = await db.updateTaskStatus(task_id, status);
+        functionResponses.push({
+          functionResponse: { name: 'update_task_status', response: { success: !!updated } }
+        });
+      }
+    }
+    
+    if (functionResponses.length > 0) {
+      result = await chat.sendMessage(functionResponses);
+    }
+  }
+  
+  return result.response.text().trim() || null;
 }
 
 /**
  * General Q&A — used by /ask and @mention handlers.
  * Includes formatted context messages in the user message.
  */
-async function askGemini(userQuestion, contextMessages = [], teamMembers = [], kbFacts = [], attachments = []) {
+async function askGemini(userQuestion, contextMessages = [], teamMembers = [], kbFacts = [], attachments = [], openTasks = []) {
   const contextBlock = contextMessages.length
     ? `\n\n=== RECENT CONVERSATION CONTEXT (Chronological - Last ${contextMessages.length} messages) ===\nCurrent Time: ${formatTime(new Date().toISOString())}\n\n${formatMessageContext(contextMessages)}`
     : '';
 
   const promptText = `${userQuestion}${contextBlock}`;
-  const dynamicSystemPrompt = buildDynamicSystemPrompt(teamMembers, kbFacts);
+  const dynamicSystemPrompt = buildDynamicSystemPrompt(teamMembers, kbFacts, openTasks);
   
   let content = promptText;
   if (attachments && attachments.length > 0) {
@@ -165,7 +242,7 @@ async function askGemini(userQuestion, contextMessages = [], teamMembers = [], k
     content = [...attachments, promptText];
   }
   
-  return callGemini(content, dynamicSystemPrompt);
+  return executeAgenticLoop(content, dynamicSystemPrompt);
 }
 
 /**

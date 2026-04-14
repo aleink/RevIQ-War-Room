@@ -138,12 +138,13 @@ bot.use(async (ctx, next) => {
           }
           const attachments = fileData ? [fileData] : [];
 
-          const [context, teamMembers, kbFacts] = await Promise.all([
+          const [context, teamMembers, kbFacts, openTasks] = await Promise.all([
             db.getRecentMessages(2000),
             db.getTeamMembers(),
-            db.getKnowledgeBase()
+            db.getKnowledgeBase(),
+            db.getAllOpenTasks()
           ]);
-          const response = await ai.askGemini(question, context, teamMembers, kbFacts, attachments);
+          const response = await ai.askGemini(question, context, teamMembers, kbFacts, attachments, openTasks);
 
           if (response) {
             const chunks = chunkText(response, 4000);

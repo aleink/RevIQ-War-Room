@@ -41,6 +41,16 @@ function formatTasksByAssignee(tasks) {
 }
 
 /**
+ * Format tasks specifically for the AI system prompt (includes UUIDs for tool calling).
+ */
+function formatTasksForAI(tasks) {
+  if (!tasks.length) return 'No open tasks.';
+  return tasks
+    .map(t => `[ID: ${t.id}] ${t.title} (Assignee: ${t.assigned_to}, Priority: ${t.priority}, Status: ${t.status})`)
+    .join('\n');
+}
+
+/**
  * Format a single decision.
  */
 function formatDecision(decision) {
@@ -247,4 +257,5 @@ module.exports = {
   daysAgo,
   downloadTelegramFile,
   processMessageAttachment,
+  formatTasksForAI,
 };
