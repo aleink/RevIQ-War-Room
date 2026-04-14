@@ -178,6 +178,8 @@ bot.catch((err) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function catchUpMessages() {
+  if (IS_PRODUCTION && WEBHOOK_URL) return; // Webhooks do not support getUpdates
+
   console.log('[bot] Fetching missed messages from Telegram...');
   try {
     const updates = await bot.api.getUpdates({ limit: 100 });
@@ -308,7 +310,7 @@ async function launch() {
     const webhookPath = '/telegram-webhook';
     app.post(webhookPath, webhookCallback(bot, 'express'));
 
-    app.listen(PORT, async () => {
+    app.listen(PORT, '0.0.0.0', async () => {
       console.log(`[bot] Express server listening on port ${PORT}`);
 
       const fullWebhookUrl = `${WEBHOOK_URL}${webhookPath}`;
