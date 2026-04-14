@@ -138,3 +138,19 @@ ALTER TABLE tasks         DISABLE ROW LEVEL SECURITY;
 ALTER TABLE decisions     DISABLE ROW LEVEL SECURITY;
 ALTER TABLE team_members  DISABLE ROW LEVEL SECURITY;
 ALTER TABLE interventions DISABLE ROW LEVEL SECURITY;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- TABLE: knowledge_base
+-- Permanent facts and rules the AI remembers and uses as foundational context
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS knowledge_base (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  fact            TEXT        NOT NULL,
+  source          TEXT        NOT NULL DEFAULT 'auto', -- 'auto' or 'manual'
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_knowledge_base_created_at ON knowledge_base (created_at DESC);
+
+ALTER TABLE knowledge_base DISABLE ROW LEVEL SECURITY;

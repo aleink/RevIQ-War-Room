@@ -98,6 +98,15 @@ async function runEvaluation(bot, state, chatId) {
 
     if (recentMessages.length < 3) return; // Not enough context
 
+    // ── KNOWLEDGE BASE EXTRACTION ──
+    const newFacts = await ai.extractKnowledge(recentMessages);
+    if (newFacts && newFacts.length > 0) {
+      await db.addKnowledgeFacts(newFacts, 'auto');
+      console.log(`[autonomous] Extracted ${newFacts.length} permanent facts into KB.`);
+    }
+
+    // ── AUTONOMOUS INTERVENTION ──
+
     const response = await ai.evaluateAutonomous(recentMessages, openTasks, recentDecisions);
 
     if (!response || response.trim() === 'SILENT') {

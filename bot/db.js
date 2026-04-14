@@ -385,6 +385,52 @@ async function getStats() {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// KNOWLEDGE BASE
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function getKnowledgeBase() {
+  const { data, error } = await supabase
+    .from('knowledge_base')
+    .select('*')
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('[db] getKnowledgeBase error:', error.message);
+    return [];
+  }
+  return data;
+}
+
+async function addKnowledgeFacts(facts, source = 'auto') {
+  if (!facts || facts.length === 0) return [];
+  
+  const rows = facts.map(fact => ({ fact, source }));
+  const { data, error } = await supabase
+    .from('knowledge_base')
+    .insert(rows)
+    .select();
+
+  if (error) {
+    console.error('[db] addKnowledgeFacts error:', error.message);
+    return [];
+  }
+  return data;
+}
+
+async function deleteKnowledgeFact(id) {
+  const { error } = await supabase
+    .from('knowledge_base')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error('[db] deleteKnowledgeFact error:', error.message);
+    return false;
+  }
+  return true;
+}
+
 module.exports = {
   saveMessage,
   getRecentMessages,
@@ -404,4 +450,7 @@ module.exports = {
   getTeamMemberName,
   logIntervention,
   getStats,
+  getKnowledgeBase,
+  addKnowledgeFacts,
+  deleteKnowledgeFact,
 };

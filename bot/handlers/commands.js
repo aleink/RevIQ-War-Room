@@ -87,8 +87,12 @@ composer.command('ask', async (ctx) => {
   const question = ctx.message.text.replace(/^\/ask\s*/i, '').trim();
   if (!question) return ctx.reply('What do you want to know? Usage: /ask [question]');
 
-  const [context] = await Promise.all([db.getRecentMessages(2000)]);
-  const response = await ai.askGemini(question, context);
+  const [context, teamMembers, kbFacts] = await Promise.all([
+    db.getRecentMessages(2000),
+    db.getTeamMembers(),
+    db.getKnowledgeBase()
+  ]);
+  const response = await ai.askGemini(question, context, teamMembers, kbFacts);
   if (response) await sendChunked(ctx, response);
 });
 
@@ -392,6 +396,52 @@ composer.command('dailyoff', async (ctx) => {
     ctx.bot.autonomousState.dailyEnabled = false;
   }
   await ctx.reply('Daily morning summary disabled.');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KNOWLEDGE BASE MANAGEMENT
+// ─────────────────────────────────────────────────────────────────────────────
+
+composer.command('teach', async (ctx) => {
+  const fact = ctx.message.text.replace(/^\/teach\s*/i, '').trim();
+  if (!fact) return ctx.reply('Usage: /teach [foundational fact about the company or team]');
+
+  const added = await db.addKnowledgeFacts([fact], 'manual');
+  if (added && added.length > 0) {
+    await ctx.reply(`🧠 *Fact memorized*\nI will now use this context in all future answers.`, { parse_mode: 'Markdown' });
+  } else {
+    await ctx.reply('Failed to save to Knowledge Base.');
+  }
+});
+
+composer.command(['kb', 'memory'], async (ctx) => {
+  const kb = await db.getKnowledgeBase();
+  if (!kb || kb.length === 0) {
+    return ctx.reply('My Knowledge Base is currently empty. Use /teach to add facts.');
+  }
+
+  let reply = `*RevIQ Permanent Knowledge Base*\n\n`;
+  kb.forEach((item, index) => {
+    // Escape Markdown characters in fact text
+    const cleanFact = item.fact.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+    reply += `${index + 1}. ${cleanFact} \n   _ID: ${item.id} (${item.source})_\n\n`;
+  });
+
+  await sendChunked(ctx, reply);
+});
+
+composer.command('forget', async (ctx) => {
+  const idStr = ctx.message.text.replace(/^\/forget\s*/i, '').trim();
+  if (!idStr) return ctx.reply('Usage: /forget [exact UUID from /memory list]');
+
+  // Provide a safety check. Usually it's better to pass the UUID. 
+  // Let's require the exact ID to avoid deleting the wrong row.
+  const success = await db.deleteKnowledgeFact(idStr);
+  if (success) {
+    await ctx.reply(`🗑️ Fact deleted from permanent memory.`);
+  } else {
+    await ctx.reply(`Failed to delete. Make sure you provided the exact ID from /memory.`);
+  }
 });
 
 module.exports = composer;

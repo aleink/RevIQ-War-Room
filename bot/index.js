@@ -132,8 +132,12 @@ bot.use(async (ctx, next) => {
         console.log(`[mentions] @${BOT_USERNAME} tagged by ${msg.from?.first_name}: "${question}"`);
 
         try {
-          const context = await db.getRecentMessages(2000);
-          const response = await ai.askGemini(question, context);
+          const [context, teamMembers, kbFacts] = await Promise.all([
+            db.getRecentMessages(2000),
+            db.getTeamMembers(),
+            db.getKnowledgeBase()
+          ]);
+          const response = await ai.askGemini(question, context, teamMembers, kbFacts);
 
           if (response) {
             const chunks = chunkText(response, 4000);

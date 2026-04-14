@@ -127,17 +127,39 @@ async function callGemini(userMessage, systemPrompt = CO_FOUNDER_SYSTEM_PROMPT, 
 // Public API
 // ─────────────────────────────────────────────────────────────────────────────
 
+function buildDynamicSystemPrompt(teamMembers = [], kbFacts = []) {
+  let prompt = CO_FOUNDER_SYSTEM_PROMPT;
+
+  if (teamMembers.length > 0) {
+    prompt += '\n\n=== TEAM ROSTER ===\n';
+    teamMembers.forEach(m => {
+      prompt += `- ${m.name} (${m.role}): mapped to telegram @${m.telegram_username}\n`;
+    });
+  }
+
+  if (kbFacts.length > 0) {
+    prompt += '\n\n=== REVIQ KNOWLEDGE BASE ===\n(Permanent facts you must remember and adhere to)\n';
+    kbFacts.forEach(k => {
+      prompt += `- ${k.fact}\n`;
+    });
+  }
+
+  return prompt;
+}
+
 /**
  * General Q&A — used by /ask and @mention handlers.
  * Includes formatted context messages in the user message.
  */
-async function askGemini(userQuestion, contextMessages = []) {
+async function askGemini(userQuestion, contextMessages = [], teamMembers = [], kbFacts = []) {
   const contextBlock = contextMessages.length
     ? `\n\n=== RECENT CONVERSATION CONTEXT (Chronological - Last ${contextMessages.length} messages) ===\nCurrent Time: ${formatTime(new Date().toISOString())}\n\n${formatMessageContext(contextMessages)}`
     : '';
 
   const prompt = `${userQuestion}${contextBlock}`;
-  return callGemini(prompt);
+  const dynamicSystemPrompt = buildDynamicSystemPrompt(teamMembers, kbFacts);
+  
+  return callGemini(prompt, dynamicSystemPrompt);
 }
 
 /**
@@ -174,6 +196,39 @@ ${messagesText}`;
       return JSON.parse(jsonMatch[0]);
     } catch (e2) {
       console.error('[ai] extractTasks parse error:', e2.message, '\nRaw response:', response);
+      return [];
+    }
+  }
+}
+
+/**
+ * Extract permanent facts, rules, or decisions to store in the knowledge base.
+ */
+async function extractKnowledge(messages) {
+  const messagesText = formatMessageContext(messages);
+
+  const prompt = `Review these recent Telegram messages and extract any NEW foundational, permanent facts about the company, the team, the project, or the business logic. 
+Focus ONLY on things worth remembering long-term (e.g. "We changed pricing to $299", "Sarah is now handling UX", "Our main competitor is X", "We integrate with Supabase via REST").
+Ignore fleeting thoughts, jokes, daily tasks, or ordinary conversation.
+
+Return ONLY a valid JSON array of strings, where each string is a concise fact. If there are no new permanent facts, return an empty array [].
+Example: ["Pricing model is now $299/mo", "Marcus handles the database schema"]
+
+Messages:
+${messagesText}`;
+
+  const response = await callGemini(prompt, CO_FOUNDER_SYSTEM_PROMPT, true);
+
+  try {
+    const parsed = JSON.parse(response);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    try {
+      const jsonMatch = response.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) return [];
+      return JSON.parse(jsonMatch[0]);
+    } catch (e2) {
+      console.error('[ai] extractKnowledge parse error:', e2.message);
       return [];
     }
   }
@@ -276,6 +331,7 @@ async function evaluateAutonomous(recentMessages, openTasks, recentDecisions) {
 module.exports = {
   askGemini,
   extractTasks,
+  extractKnowledge,
   categorizeMessage,
   generateRecap,
   generateWeeklyRecap,
