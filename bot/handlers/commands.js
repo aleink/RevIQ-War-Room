@@ -88,7 +88,7 @@ composer.command('ask', async (ctx) => {
   if (!question) return ctx.reply('What do you want to know? Usage: /ask [question]');
 
   const [context] = await Promise.all([db.getRecentMessages(30)]);
-  const response = await ai.askClaude(question, context);
+  const response = await ai.askGemini(question, context);
   if (response) await sendChunked(ctx, response);
 });
 

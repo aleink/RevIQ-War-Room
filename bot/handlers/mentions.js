@@ -41,7 +41,7 @@ composer.on('message', async (ctx) => {
 
   // Pull context and ask Claude
   const context = await db.getRecentMessages(30);
-  const response = await ai.askClaude(question, context);
+  const response = await ai.askGemini(question, context);
 
   if (response) {
     const chunks = chunkText(response, 4000);

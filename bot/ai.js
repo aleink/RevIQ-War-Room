@@ -1,12 +1,11 @@
 'use strict';
 
 require('dotenv').config();
-const Anthropic = require('@anthropic-ai/sdk');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-const MODEL = 'claude-sonnet-4-5';
-const MAX_TOKENS = 1024;
+const MODEL = 'gemini-1.5-flash';
 const MAX_RETRIES = 3;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -43,7 +42,7 @@ function formatTime(isoStr) {
 
 function formatMessageContext(messages) {
   if (!messages || !messages.length) return '(no messages)';
-  return messages.map((m) => `[${m.sender_name} at ${formatTime(m.created_at)}]: ${m.text || '[file]'}`).join('\n');
+  return messages.map((m) => `[\${m.sender_name} at \${formatTime(m.created_at)}]: \${m.text || '[file]'}`).join('\n');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -52,11 +51,11 @@ function formatMessageContext(messages) {
 
 function buildAutonomousPrompt(recentMessages, openTasks, recentDecisions) {
   const tasksBlock = openTasks.length
-    ? openTasks.map((t) => `- [${t.priority}] ${t.title} → ${t.assigned_to} (${t.status})`).join('\n')
+    ? openTasks.map((t) => `- [\${t.priority}] \${t.title} → \${t.assigned_to} (\${t.status})`).join('\n')
     : 'No open tasks.';
 
   const decisionsBlock = recentDecisions.length
-    ? recentDecisions.map((d) => `- ${d.decision} (by ${d.decided_by})`).join('\n')
+    ? recentDecisions.map((d) => `- \${d.decision} (by \${d.decided_by})`).join('\n')
     : 'No recent decisions.';
 
   const messagesBlock = formatMessageContext(recentMessages);
@@ -64,13 +63,13 @@ function buildAutonomousPrompt(recentMessages, openTasks, recentDecisions) {
   return `You are monitoring a startup team's group chat. Review these recent messages along with the team's current open tasks and recent decisions provided below.
 
 === RECENT MESSAGES ===
-${messagesBlock}
+\${messagesBlock}
 
 === OPEN TASKS ===
-${tasksBlock}
+\${tasksBlock}
 
 === RECENT DECISIONS ===
-${decisionsBlock}
+\${decisionsBlock}
 
 Should you intervene? Only intervene if one of these conditions is clearly true:
 
@@ -88,32 +87,37 @@ Start your first word with the trigger label in brackets, e.g. [CONTRADICTION] o
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Core Claude call with retry
+// Core Gemini call with retry
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function callClaude(userMessage, systemPrompt = CO_FOUNDER_SYSTEM_PROMPT, retries = MAX_RETRIES) {
+async function callGemini(userMessage, systemPrompt = CO_FOUNDER_SYSTEM_PROMPT, isJson = false, retries = MAX_RETRIES) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const response = await client.messages.create({
+      const modelConfig = { 
         model: MODEL,
-        max_tokens: MAX_TOKENS,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userMessage }],
-      });
+        systemInstruction: systemPrompt 
+      };
 
-      return response.content?.[0]?.text?.trim() || null;
+      if (isJson) {
+        modelConfig.generationConfig = { responseMimeType: "application/json" };
+      }
+
+      const model = genAI.getGenerativeModel(modelConfig);
+      const result = await model.generateContent(userMessage);
+      
+      return result.response.text().trim() || null;
     } catch (err) {
       const isRateLimit = err?.status === 429;
-      const isOverload = err?.status === 529;
+      const isOverload = err?.status === 529 || err?.status === 503;
 
       if ((isRateLimit || isOverload) && attempt < retries) {
         const delay = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
-        console.warn(`[ai] Claude ${err.status} — retrying in ${delay}ms (attempt ${attempt}/${retries})`);
+        console.warn(`[ai] Gemini API \${err.status || 'Error'} — retrying in \${delay}ms (attempt \${attempt}/\${retries})`);
         await new Promise((r) => setTimeout(r, delay));
         continue;
       }
 
-      console.error('[ai] Claude API error:', err?.message || err);
+      console.error('[ai] Gemini API error:', err?.message || err);
       throw err;
     }
   }
@@ -127,13 +131,13 @@ async function callClaude(userMessage, systemPrompt = CO_FOUNDER_SYSTEM_PROMPT, 
  * General Q&A — used by /ask and @mention handlers.
  * Includes formatted context messages in the user message.
  */
-async function askClaude(userQuestion, contextMessages = []) {
+async function askGemini(userQuestion, contextMessages = []) {
   const contextBlock = contextMessages.length
-    ? `\n\n=== RECENT CONVERSATION CONTEXT (Chronological - Last ${contextMessages.length} messages) ===\nCurrent Time: ${formatTime(new Date().toISOString())}\n\n${formatMessageContext(contextMessages)}`
+    ? `\n\n=== RECENT CONVERSATION CONTEXT (Chronological - Last \${contextMessages.length} messages) ===\nCurrent Time: \${formatTime(new Date().toISOString())}\n\n\${formatMessageContext(contextMessages)}`
     : '';
 
-  const prompt = `${userQuestion}${contextBlock}`;
-  return callClaude(prompt);
+  const prompt = `\${userQuestion}\${contextBlock}`;
+  return callGemini(prompt);
 }
 
 /**
@@ -144,7 +148,7 @@ async function extractTasks(messages, teamMembers) {
   const teamList = teamMembers.map((m) => m.name).join(', ');
   const messagesText = formatMessageContext(messages);
 
-  const prompt = `Extract every action item from these Telegram messages. Team members: ${teamList}.
+  const prompt = `Extract every action item from these Telegram messages. Team members: \${teamList}.
 
 For each action item, return a JSON object with:
 - title: short action description (verb + object, e.g. "Build landing page")
@@ -155,18 +159,23 @@ Return ONLY a valid JSON array. No explanation. No markdown. Example:
 [{"title":"Fix pricing page","assigned_to":"Marcus","priority":"high"}]
 
 Messages:
-${messagesText}`;
+\${messagesText}`;
 
-  const response = await callClaude(prompt);
+  const response = await callGemini(prompt, CO_FOUNDER_SYSTEM_PROMPT, true);
 
   try {
-    // Extract JSON even if Claude added extra text
-    const jsonMatch = response.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) return [];
-    return JSON.parse(jsonMatch[0]);
+    const parsed = JSON.parse(response);
+    return Array.isArray(parsed) ? parsed : [];
   } catch (e) {
-    console.error('[ai] extractTasks parse error:', e.message, '\nRaw response:', response);
-    return [];
+    // Falback to regex match if strict JSON parsing fails
+    try {
+      const jsonMatch = response.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) return [];
+      return JSON.parse(jsonMatch[0]);
+    } catch (e2) {
+      console.error('[ai] extractTasks parse error:', e2.message, '\nRaw response:', response);
+      return [];
+    }
   }
 }
 
@@ -177,11 +186,11 @@ async function categorizeMessage(messageText) {
   const prompt = `Categorize this Telegram message with exactly ONE tag from this list:
 #task, #decision, #idea, #blocker, #reference
 
-Message: "${messageText}"
+Message: "\${messageText}"
 
 Reply with ONLY the tag. Nothing else.`;
 
-  const response = await callClaude(prompt);
+  const response = await callGemini(prompt);
   const validTags = ['#task', '#decision', '#idea', '#blocker', '#reference'];
   const tag = response?.trim().toLowerCase();
   return validTags.includes(tag) ? tag : '#reference';
@@ -194,28 +203,28 @@ async function generateRecap(messages, tasks, decisions, period = '24 hours') {
   const messagesText = formatMessageContext(messages);
 
   const tasksText = tasks.length
-    ? tasks.map((t) => `- ${t.title} → ${t.assigned_to} [${t.status}]`).join('\n')
+    ? tasks.map((t) => `- \${t.title} → \${t.assigned_to} [\${t.status}]`).join('\n')
     : 'None';
 
   const decisionsText = decisions.length
-    ? decisions.map((d) => `- ${d.decision} (by ${d.decided_by})`).join('\n')
+    ? decisions.map((d) => `- \${d.decision} (by \${d.decided_by})`).join('\n')
     : 'None';
 
-  const prompt = `Summarize this startup team's activity over the last ${period}.
+  const prompt = `Summarize this startup team's activity over the last \${period}.
 
-Messages (${messages.length} total):
-${messagesText}
+Messages (\${messages.length} total):
+\${messagesText}
 
 Tasks:
-${tasksText}
+\${tasksText}
 
 Decisions:
-${decisionsText}
+\${decisionsText}
 
 Include: messages exchanged, tasks created, tasks completed, decisions logged, key topics, open questions, any blockers mentioned.
 Be concise. Use bullet points. Write like a team member, not a report generator.`;
 
-  return callClaude(prompt);
+  return callGemini(prompt);
 }
 
 /**
@@ -227,16 +236,16 @@ async function generateWeeklyRecap(messages, tasks, decisions, teamMembers) {
 
   const prompt = `Generate a structured weekly recap for this startup team.
 
-Team members: ${teamNames.join(', ')}
+Team members: \${teamNames.join(', ')}
 
 Messages this week:
-${messagesText}
+\${messagesText}
 
 Tasks (all):
-${tasks.map((t) => `- ${t.title} → ${t.assigned_to} [${t.status}]${t.status === 'done' ? ' ✓' : ''}`).join('\n')}
+\${tasks.map((t) => `- \${t.title} → \${t.assigned_to} [\${t.status}]\${t.status === 'done' ? ' ✓' : ''}`).join('\n')}
 
 Decisions this week:
-${decisions.map((d) => `- ${d.decision} (by ${d.decided_by})`).join('\n')}
+\${decisions.map((d) => `- \${d.decision} (by \${d.decided_by})`).join('\n')}
 
 Format:
 📊 *Week in Numbers*
@@ -251,7 +260,7 @@ End with:
 🚧 *Blockers / Open Questions*
 📌 *Key Decisions Made*`;
 
-  return callClaude(prompt, CO_FOUNDER_SYSTEM_PROMPT);
+  return callGemini(prompt, CO_FOUNDER_SYSTEM_PROMPT);
 }
 
 /**
@@ -260,12 +269,12 @@ End with:
  */
 async function evaluateAutonomous(recentMessages, openTasks, recentDecisions) {
   const prompt = buildAutonomousPrompt(recentMessages, openTasks, recentDecisions);
-  const response = await callClaude(prompt, CO_FOUNDER_SYSTEM_PROMPT);
+  const response = await callGemini(prompt, CO_FOUNDER_SYSTEM_PROMPT);
   return response || 'SILENT';
 }
 
 module.exports = {
-  askClaude,
+  askGemini,
   extractTasks,
   categorizeMessage,
   generateRecap,
