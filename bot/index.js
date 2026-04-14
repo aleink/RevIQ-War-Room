@@ -7,7 +7,7 @@ const express = require('express');
 const cron = require('node-cron');
 const db = require('./db');
 const ai = require('./ai');
-const { chunkText } = require('./utils');
+const { chunkText, processMessageAttachment } = require('./utils');
 const commands = require('./handlers/commands');
 const { AutonomousState, setupAutonomous, onMessage, checkStaleTasks, sendDailyNudge } = require('./handlers/autonomous');
 
@@ -132,12 +132,18 @@ bot.use(async (ctx, next) => {
         console.log(`[mentions] @${BOT_USERNAME} tagged by ${msg.from?.first_name}: "${question}"`);
 
         try {
+          const fileData = await processMessageAttachment(ctx);
+          if (fileData) {
+            await ctx.reply('Reading attached document... ⏳', { reply_to_message_id: msg.message_id });
+          }
+          const attachments = fileData ? [fileData] : [];
+
           const [context, teamMembers, kbFacts] = await Promise.all([
             db.getRecentMessages(2000),
             db.getTeamMembers(),
             db.getKnowledgeBase()
           ]);
-          const response = await ai.askGemini(question, context, teamMembers, kbFacts);
+          const response = await ai.askGemini(question, context, teamMembers, kbFacts, attachments);
 
           if (response) {
             const chunks = chunkText(response, 4000);

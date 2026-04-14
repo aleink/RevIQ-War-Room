@@ -3,7 +3,7 @@
 const { Composer } = require('grammy');
 const db = require('../db');
 const ai = require('../ai');
-const { chunkText } = require('../utils');
+const { chunkText, processMessageAttachment } = require('../utils');
 
 const composer = new Composer();
 

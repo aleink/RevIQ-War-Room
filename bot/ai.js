@@ -151,15 +151,21 @@ function buildDynamicSystemPrompt(teamMembers = [], kbFacts = []) {
  * General Q&A — used by /ask and @mention handlers.
  * Includes formatted context messages in the user message.
  */
-async function askGemini(userQuestion, contextMessages = [], teamMembers = [], kbFacts = []) {
+async function askGemini(userQuestion, contextMessages = [], teamMembers = [], kbFacts = [], attachments = []) {
   const contextBlock = contextMessages.length
     ? `\n\n=== RECENT CONVERSATION CONTEXT (Chronological - Last ${contextMessages.length} messages) ===\nCurrent Time: ${formatTime(new Date().toISOString())}\n\n${formatMessageContext(contextMessages)}`
     : '';
 
-  const prompt = `${userQuestion}${contextBlock}`;
+  const promptText = `${userQuestion}${contextBlock}`;
   const dynamicSystemPrompt = buildDynamicSystemPrompt(teamMembers, kbFacts);
   
-  return callGemini(prompt, dynamicSystemPrompt);
+  let content = promptText;
+  if (attachments && attachments.length > 0) {
+    // Generate multimodal prompt array
+    content = [...attachments, promptText];
+  }
+  
+  return callGemini(content, dynamicSystemPrompt);
 }
 
 /**
@@ -202,34 +208,56 @@ ${messagesText}`;
 }
 
 /**
- * Extract permanent facts, rules, or decisions to store in the knowledge base.
+ * Extract permanent facts to store in the knowledge base, and prune old contradicted ones.
+ * Optionally parses attached multimodal documents.
  */
-async function extractKnowledge(messages) {
+async function extractKnowledge(messages, currentKbFacts = [], attachments = []) {
   const messagesText = formatMessageContext(messages);
+  const currentKbText = currentKbFacts.length 
+    ? currentKbFacts.map(k => `[ID: ${k.id}] ${k.fact}`).join('\n')
+    : '(No existing facts)';
 
-  const prompt = `Review these recent Telegram messages and extract any NEW foundational, permanent facts about the company, the team, the project, or the business logic. 
+  const promptText = `Review these recent Telegram messages and any attached documents. Extract any NEW foundational, permanent facts about the company, the team, the project, or the business logic. 
 Focus ONLY on things worth remembering long-term (e.g. "We changed pricing to $299", "Sarah is now handling UX", "Our main competitor is X", "We integrate with Supabase via REST").
 Ignore fleeting thoughts, jokes, daily tasks, or ordinary conversation.
 
-Return ONLY a valid JSON array of strings, where each string is a concise fact. If there are no new permanent facts, return an empty array [].
-Example: ["Pricing model is now $299/mo", "Marcus handles the database schema"]
+Here is what you currently know in your permanent Knowledge Base:
+${currentKbText}
+
+If a NEW fact completely contradicts and overrides an OLD fact (for example, if pricing changed from $99 to $299), you must DELETE the old fact by its ID, and ADD the new fact.
+
+Return ONLY a valid JSON object with an "add" array of new strings, and a "delete" array of UUID strings to remove.
+Example: {"add": ["Pricing model is now $299/mo", "Marcus handles DB"], "delete": ["abc-123-uuid"]}
 
 Messages:
 ${messagesText}`;
 
-  const response = await callGemini(prompt, CO_FOUNDER_SYSTEM_PROMPT, true);
+  let content = promptText;
+  if (attachments && attachments.length > 0) {
+    content = [...attachments, promptText];
+  }
 
+  const response = await callGemini(content, CO_FOUNDER_SYSTEM_PROMPT, true);
+
+  const emptyResult = { add: [], delete: [] };
   try {
     const parsed = JSON.parse(response);
-    return Array.isArray(parsed) ? parsed : [];
+    return {
+      add: Array.isArray(parsed.add) ? parsed.add : [],
+      delete: Array.isArray(parsed.delete) ? parsed.delete : []
+    };
   } catch (e) {
     try {
-      const jsonMatch = response.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) return [];
-      return JSON.parse(jsonMatch[0]);
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return emptyResult;
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        add: Array.isArray(parsed.add) ? parsed.add : [],
+        delete: Array.isArray(parsed.delete) ? parsed.delete : []
+      };
     } catch (e2) {
       console.error('[ai] extractKnowledge parse error:', e2.message);
-      return [];
+      return emptyResult;
     }
   }
 }

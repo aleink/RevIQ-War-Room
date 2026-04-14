@@ -90,19 +90,28 @@ async function runEvaluation(bot, state, chatId) {
   state.resetChecks();
 
   try {
-    const [recentMessages, openTasks, recentDecisions] = await Promise.all([
+    const [recentMessages, openTasks, recentDecisions, kbFacts] = await Promise.all([
       db.getRecentMessages(20),
       db.getAllOpenTasks(),
       db.getRecentDecisions(10),
+      db.getKnowledgeBase(),
     ]);
 
     if (recentMessages.length < 3) return; // Not enough context
 
     // ── KNOWLEDGE BASE EXTRACTION ──
-    const newFacts = await ai.extractKnowledge(recentMessages);
-    if (newFacts && newFacts.length > 0) {
-      await db.addKnowledgeFacts(newFacts, 'auto');
-      console.log(`[autonomous] Extracted ${newFacts.length} permanent facts into KB.`);
+    const kbResults = await ai.extractKnowledge(recentMessages, kbFacts);
+    
+    if (kbResults.delete && kbResults.delete.length > 0) {
+      for (const id of kbResults.delete) {
+        await db.deleteKnowledgeFact(id);
+      }
+      console.log(`[autonomous] KB Pruned ${kbResults.delete.length} obsolete facts.`);
+    }
+
+    if (kbResults.add && kbResults.add.length > 0) {
+      await db.addKnowledgeFacts(kbResults.add, 'auto');
+      console.log(`[autonomous] Extracted ${kbResults.add.length} new permanent facts.`);
     }
 
     // ── AUTONOMOUS INTERVENTION ──

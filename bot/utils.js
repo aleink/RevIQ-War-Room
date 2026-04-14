@@ -177,6 +177,59 @@ function daysAgo(n) {
   return new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
 }
 
+/**
+ * Download a file from Telegram and convert it to Base64 with MimeType.
+ */
+async function downloadTelegramFile(ctx, fileId) {
+  try {
+    const file = await ctx.api.getFile(fileId);
+    const url = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+    
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP Error: ${res.statusText}`);
+    
+    const arrayBuffer = await res.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+    
+    const ext = file.file_path.split('.').pop().toLowerCase();
+    let mimeType = 'application/octet-stream';
+    if (['jpg', 'jpeg'].includes(ext)) mimeType = 'image/jpeg';
+    else if (ext === 'png') mimeType = 'image/png';
+    else if (ext === 'webp') mimeType = 'image/webp';
+    else if (ext === 'pdf') mimeType = 'application/pdf';
+    else if (ext === 'txt') mimeType = 'text/plain';
+    else if (ext === 'csv') mimeType = 'text/csv';
+
+    return { 
+      inlineData: {
+        data: base64,
+        mimeType
+      }
+    };
+  } catch (err) {
+    console.error('[utils] fetch file error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Extract the best file attachment from a message context and download it.
+ */
+async function processMessageAttachment(ctx) {
+  const msg = ctx.message;
+  if (!msg) return null;
+
+  let fileId = null;
+  if (msg.photo && msg.photo.length > 0) {
+    fileId = msg.photo[msg.photo.length - 1].file_id; // Get highest resolution
+  } else if (msg.document) {
+    fileId = msg.document.file_id;
+  }
+  
+  if (!fileId) return null;
+  return downloadTelegramFile(ctx, fileId);
+}
+
 module.exports = {
   formatTask,
   formatTasksByAssignee,
@@ -192,4 +245,6 @@ module.exports = {
   mentionsBot,
   hoursAgo,
   daysAgo,
+  downloadTelegramFile,
+  processMessageAttachment,
 };

@@ -15,6 +15,7 @@ const {
   formatDate,
   buildTelegramDeepLink,
   prioritySort,
+  processMessageAttachment,
 } = require('../utils');
 
 const composer = new Composer();
@@ -84,15 +85,23 @@ composer.command('help', async (ctx) => {
 // /ask [question]
 // ─────────────────────────────────────────────────────────────────────────────
 composer.command('ask', async (ctx) => {
-  const question = ctx.message.text.replace(/^\/ask\s*/i, '').trim();
-  if (!question) return ctx.reply('What do you want to know? Usage: /ask [question]');
+  const question = ctx.message.caption ? ctx.message.caption.replace(/^\/ask\s*/i, '').trim() : ctx.message.text.replace(/^\/ask\s*/i, '').trim();
+  if (!question && !ctx.message.photo && !ctx.message.document) {
+    return ctx.reply('What do you want to know? Usage: /ask [question]');
+  }
+
+  const fileData = await processMessageAttachment(ctx);
+  if (fileData) {
+    await ctx.reply('Reading attached document... ⏳');
+  }
+  const attachments = fileData ? [fileData] : [];
 
   const [context, teamMembers, kbFacts] = await Promise.all([
     db.getRecentMessages(2000),
     db.getTeamMembers(),
     db.getKnowledgeBase()
   ]);
-  const response = await ai.askGemini(question, context, teamMembers, kbFacts);
+  const response = await ai.askGemini(question, context, teamMembers, kbFacts, attachments);
   if (response) await sendChunked(ctx, response);
 });
 
@@ -403,10 +412,38 @@ composer.command('dailyoff', async (ctx) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 composer.command('teach', async (ctx) => {
-  const fact = ctx.message.text.replace(/^\/teach\s*/i, '').trim();
-  if (!fact) return ctx.reply('Usage: /teach [foundational fact about the company or team]');
+  const factText = ctx.message.caption ? ctx.message.caption.replace(/^\/teach\s*/i, '').trim() : ctx.message.text.replace(/^\/teach\s*/i, '').trim();
+  
+  const fileData = await processMessageAttachment(ctx);
 
-  const added = await db.addKnowledgeFacts([fact], 'manual');
+  if (fileData) {
+    await ctx.reply('Reading document to extract facts into the Knowledge Base... ⏳');
+    
+    // We pass an empty recentMessages array because we only care about the explicit factText and the document
+    const messages = factText ? [{ sender_name: 'Admin', text: factText, created_at: new Date().toISOString() }] : [];
+    const kbFacts = await db.getKnowledgeBase();
+    
+    const kbResults = await ai.extractKnowledge(messages, kbFacts, [fileData]);
+    
+    let replyMsg = '';
+    if (kbResults.delete && kbResults.delete.length > 0) {
+      for (const id of kbResults.delete) await db.deleteKnowledgeFact(id);
+      replyMsg += `🗑️ Pruned ${kbResults.delete.length} obsolete facts.\n`;
+    }
+    if (kbResults.add && kbResults.add.length > 0) {
+      await db.addKnowledgeFacts(kbResults.add, 'manual');
+      replyMsg += `🧠 Extracted & memorized ${kbResults.add.length} new permanent facts.`;
+    }
+
+    if (!replyMsg) replyMsg = 'No permanent facts were extracted from the document.';
+    await ctx.reply(replyMsg, { parse_mode: 'Markdown' });
+    return;
+  }
+
+  // Pure manual text insertion
+  if (!factText) return ctx.reply('Usage: /teach [fact] OR /teach [attached document]');
+
+  const added = await db.addKnowledgeFacts([factText], 'manual');
   if (added && added.length > 0) {
     await ctx.reply(`🧠 *Fact memorized*\nI will now use this context in all future answers.`, { parse_mode: 'Markdown' });
   } else {
