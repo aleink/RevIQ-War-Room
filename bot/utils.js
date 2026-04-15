@@ -249,33 +249,44 @@ async function processMessageAttachment(ctx) {
   const msg = ctx.message;
   if (!msg) return null;
 
-  let fileId = null;
-  let overrideMime = null;
+  // Try extracting from the current message first, then fall back to the replied-to message
+  const sources = [msg];
+  if (msg.reply_to_message) sources.push(msg.reply_to_message);
 
-  if (msg.photo && msg.photo.length > 0) {
-    fileId = msg.photo[msg.photo.length - 1].file_id;
-  } else if (msg.document) {
-    fileId = msg.document.file_id;
-    if (msg.document.mime_type) overrideMime = msg.document.mime_type;
-  } else if (msg.voice) {
-    fileId = msg.voice.file_id;
-    overrideMime = msg.voice.mime_type || 'audio/ogg';
-  } else if (msg.audio) {
-    fileId = msg.audio.file_id;
-    if (msg.audio.mime_type) overrideMime = msg.audio.mime_type;
-  } else if (msg.video) {
-    fileId = msg.video.file_id;
-    if (msg.video.mime_type) overrideMime = msg.video.mime_type;
-  } else if (msg.video_note) {
-    fileId = msg.video_note.file_id;
-    overrideMime = 'video/mp4';
-  } else if (msg.sticker && !msg.sticker.is_animated) {
-    fileId = msg.sticker.file_id;
-    overrideMime = 'image/webp';
+  for (const src of sources) {
+    const result = extractFileInfo(src);
+    if (result) return downloadTelegramFile(ctx, result.fileId, result.overrideMime);
   }
-  
-  if (!fileId) return null;
-  return downloadTelegramFile(ctx, fileId, overrideMime);
+
+  return null;
+}
+
+/**
+ * Extract fileId and MIME from a Telegram message object.
+ */
+function extractFileInfo(msg) {
+  if (msg.photo && msg.photo.length > 0) {
+    return { fileId: msg.photo[msg.photo.length - 1].file_id, overrideMime: null };
+  }
+  if (msg.document) {
+    return { fileId: msg.document.file_id, overrideMime: msg.document.mime_type || null };
+  }
+  if (msg.voice) {
+    return { fileId: msg.voice.file_id, overrideMime: msg.voice.mime_type || 'audio/ogg' };
+  }
+  if (msg.audio) {
+    return { fileId: msg.audio.file_id, overrideMime: msg.audio.mime_type || null };
+  }
+  if (msg.video) {
+    return { fileId: msg.video.file_id, overrideMime: msg.video.mime_type || null };
+  }
+  if (msg.video_note) {
+    return { fileId: msg.video_note.file_id, overrideMime: 'video/mp4' };
+  }
+  if (msg.sticker && !msg.sticker.is_animated) {
+    return { fileId: msg.sticker.file_id, overrideMime: 'image/webp' };
+  }
+  return null;
 }
 
 module.exports = {
