@@ -207,55 +207,78 @@ const AGENT_TOOLS = [{
 }];
 
 async function executeAgenticLoop(content, systemPrompt) {
-  const modelConfig = { 
-    model: MODEL,
-    systemInstruction: systemPrompt,
-    tools: AGENT_TOOLS
-  };
+  try {
+    const modelConfig = { 
+      model: MODEL,
+      systemInstruction: systemPrompt,
+      tools: AGENT_TOOLS
+    };
 
-  const model = genAI.getGenerativeModel(modelConfig);
-  const chat = model.startChat();
-  
-  let result = await chat.sendMessage(content);
-  
-  if (result.response.functionCalls && typeof result.response.functionCalls === 'function' && result.response.functionCalls()) {
-    const calls = result.response.functionCalls();
-    const functionResponses = [];
+    const model = genAI.getGenerativeModel(modelConfig);
+    const chat = model.startChat();
     
-    for (const call of calls) {
-      if (call.name === 'create_task') {
-        const { title, assigned_to, priority } = call.args;
-        const task = await db.createTask({ title, assigned_to, priority, created_by: 'RevIQ Agent' });
-        functionResponses.push({
-          functionResponse: { name: 'create_task', response: { success: !!task, task_id: task?.id } }
-        });
-      } else if (call.name === 'update_task_status') {
-        const { task_id, status } = call.args;
-        const updated = await db.updateTaskStatus(task_id, status);
-        functionResponses.push({
-          functionResponse: { name: 'update_task_status', response: { success: !!updated } }
-        });
-      } else if (call.name === 'add_to_knowledge_base') {
-        const { fact } = call.args;
-        const added = await db.addKnowledgeFacts([fact], 'agent');
-        functionResponses.push({
-          functionResponse: { name: 'add_to_knowledge_base', response: { success: !!(added && added.length) } }
-        });
-      } else if (call.name === 'delete_from_knowledge_base') {
-        const { uuid } = call.args;
-        const deleted = await db.deleteKnowledgeFact(uuid);
-        functionResponses.push({
-          functionResponse: { name: 'delete_from_knowledge_base', response: { success: !!deleted } }
-        });
+    let result = await chat.sendMessage(content);
+
+    // Check for blocked/empty responses (safety filters, finishReason: OTHER)
+    const finishReason = result.response?.candidates?.[0]?.finishReason;
+    if (finishReason === 'SAFETY' || finishReason === 'OTHER') {
+      console.warn(`[ai] Gemini blocked response (finishReason: ${finishReason}). Falling back.`);
+      return "I can see the attachment, but I can't process this request — it was flagged by Google's safety filters (likely sensitive financial or personal data). Try asking about something else in the document.";
+    }
+    
+    if (result.response.functionCalls && typeof result.response.functionCalls === 'function' && result.response.functionCalls()) {
+      const calls = result.response.functionCalls();
+      const functionResponses = [];
+      
+      for (const call of calls) {
+        if (call.name === 'create_task') {
+          const { title, assigned_to, priority } = call.args;
+          const task = await db.createTask({ title, assigned_to, priority, created_by: 'RevIQ Agent' });
+          functionResponses.push({
+            functionResponse: { name: 'create_task', response: { success: !!task, task_id: task?.id } }
+          });
+        } else if (call.name === 'update_task_status') {
+          const { task_id, status } = call.args;
+          const updated = await db.updateTaskStatus(task_id, status);
+          functionResponses.push({
+            functionResponse: { name: 'update_task_status', response: { success: !!updated } }
+          });
+        } else if (call.name === 'add_to_knowledge_base') {
+          const { fact } = call.args;
+          const added = await db.addKnowledgeFacts([fact], 'agent');
+          functionResponses.push({
+            functionResponse: { name: 'add_to_knowledge_base', response: { success: !!(added && added.length) } }
+          });
+        } else if (call.name === 'delete_from_knowledge_base') {
+          const { uuid } = call.args;
+          const deleted = await db.deleteKnowledgeFact(uuid);
+          functionResponses.push({
+            functionResponse: { name: 'delete_from_knowledge_base', response: { success: !!deleted } }
+          });
+        }
+      }
+      
+      if (functionResponses.length > 0) {
+        result = await chat.sendMessage(functionResponses);
       }
     }
     
-    if (functionResponses.length > 0) {
-      result = await chat.sendMessage(functionResponses);
+    const text = result.response.text()?.trim();
+    if (!text) {
+      console.warn('[ai] Gemini returned empty text after agentic loop.');
+      return "I processed the request but got an empty response. The content may have been blocked by safety filters.";
+    }
+    return text;
+  } catch (err) {
+    console.error('[ai] executeAgenticLoop error:', err.message);
+    // Fall back to the standard non-tool callGemini path
+    try {
+      return await callGemini(content, systemPrompt);
+    } catch (fallbackErr) {
+      console.error('[ai] fallback callGemini also failed:', fallbackErr.message);
+      return "Something went wrong processing this. Try again or rephrase your question.";
     }
   }
-  
-  return result.response.text().trim() || null;
 }
 
 /**
