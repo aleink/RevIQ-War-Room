@@ -190,7 +190,7 @@ function daysAgo(n) {
 /**
  * Download a file from Telegram and convert it to Base64 with MimeType.
  */
-async function downloadTelegramFile(ctx, fileId) {
+async function downloadTelegramFile(ctx, fileId, overrideMime = null) {
   try {
     const file = await ctx.api.getFile(fileId);
     const url = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
@@ -202,13 +202,32 @@ async function downloadTelegramFile(ctx, fileId) {
     const base64 = Buffer.from(arrayBuffer).toString('base64');
     
     const ext = file.file_path.split('.').pop().toLowerCase();
-    let mimeType = 'application/octet-stream';
-    if (['jpg', 'jpeg'].includes(ext)) mimeType = 'image/jpeg';
-    else if (ext === 'png') mimeType = 'image/png';
-    else if (ext === 'webp') mimeType = 'image/webp';
-    else if (ext === 'pdf') mimeType = 'application/pdf';
-    else if (ext === 'txt') mimeType = 'text/plain';
-    else if (ext === 'csv') mimeType = 'text/csv';
+    const MIME_MAP = {
+      // Images (Gemini native vision/OCR)
+      jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+      webp: 'image/webp', gif: 'image/gif', bmp: 'image/bmp',
+      tiff: 'image/tiff', tif: 'image/tiff', heic: 'image/heic',
+      svg: 'image/svg+xml',
+      // Documents
+      pdf: 'application/pdf', txt: 'text/plain', csv: 'text/csv',
+      md: 'text/markdown', json: 'application/json',
+      html: 'text/html', htm: 'text/html', xml: 'text/xml',
+      // Office (Gemini supports these natively)
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      doc: 'application/msword',
+      xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      xls: 'application/vnd.ms-excel',
+      pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      ppt: 'application/vnd.ms-powerpoint',
+      // Audio (Gemini native)
+      ogg: 'audio/ogg', oga: 'audio/ogg', mp3: 'audio/mpeg',
+      wav: 'audio/wav', m4a: 'audio/mp4', aac: 'audio/aac',
+      flac: 'audio/flac', opus: 'audio/opus',
+      // Video (Gemini native)
+      mp4: 'video/mp4', mpeg: 'video/mpeg', mov: 'video/quicktime',
+      avi: 'video/x-msvideo', webm: 'video/webm',
+    };
+    const mimeType = overrideMime || MIME_MAP[ext] || 'application/octet-stream';
 
     return { 
       inlineData: {
@@ -224,20 +243,39 @@ async function downloadTelegramFile(ctx, fileId) {
 
 /**
  * Extract the best file attachment from a message context and download it.
+ * Handles photos, documents, voice notes, video notes, audio, video, and stickers.
  */
 async function processMessageAttachment(ctx) {
   const msg = ctx.message;
   if (!msg) return null;
 
   let fileId = null;
+  let overrideMime = null;
+
   if (msg.photo && msg.photo.length > 0) {
-    fileId = msg.photo[msg.photo.length - 1].file_id; // Get highest resolution
+    fileId = msg.photo[msg.photo.length - 1].file_id;
   } else if (msg.document) {
     fileId = msg.document.file_id;
+    if (msg.document.mime_type) overrideMime = msg.document.mime_type;
+  } else if (msg.voice) {
+    fileId = msg.voice.file_id;
+    overrideMime = msg.voice.mime_type || 'audio/ogg';
+  } else if (msg.audio) {
+    fileId = msg.audio.file_id;
+    if (msg.audio.mime_type) overrideMime = msg.audio.mime_type;
+  } else if (msg.video) {
+    fileId = msg.video.file_id;
+    if (msg.video.mime_type) overrideMime = msg.video.mime_type;
+  } else if (msg.video_note) {
+    fileId = msg.video_note.file_id;
+    overrideMime = 'video/mp4';
+  } else if (msg.sticker && !msg.sticker.is_animated) {
+    fileId = msg.sticker.file_id;
+    overrideMime = 'image/webp';
   }
   
   if (!fileId) return null;
-  return downloadTelegramFile(ctx, fileId);
+  return downloadTelegramFile(ctx, fileId, overrideMime);
 }
 
 module.exports = {
