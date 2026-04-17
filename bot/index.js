@@ -7,7 +7,7 @@ const express = require('express');
 const cron = require('node-cron');
 const db = require('./db');
 const ai = require('./ai');
-const { chunkText, processMessageAttachment } = require('./utils');
+const { chunkText, processMessageAttachment, sanitizeMarkdown } = require('./utils');
 const commands = require('./handlers/commands');
 const { AutonomousState, setupAutonomous, onMessage, checkStaleTasks, sendDailyNudge } = require('./handlers/autonomous');
 
@@ -149,10 +149,19 @@ bot.use(async (ctx, next) => {
           if (response) {
             const chunks = chunkText(response, 4000);
             for (const chunk of chunks) {
-              await ctx.reply(chunk, {
-                parse_mode: 'Markdown',
-                reply_to_message_id: msg.message_id,
-              });
+              const safeChunk = sanitizeMarkdown(chunk);
+              try {
+                await ctx.reply(safeChunk, {
+                  parse_mode: 'Markdown',
+                  reply_to_message_id: msg.message_id,
+                });
+              } catch (parseErr) {
+                // Telegram rejected the Markdown — retry as plain text
+                console.warn('[mentions] Markdown parse failed, falling back to plain text:', parseErr.message);
+                await ctx.reply(chunk, {
+                  reply_to_message_id: msg.message_id,
+                });
+              }
             }
           }
         } catch (err) {
@@ -319,7 +328,7 @@ async function launch() {
     app.get('/health', (_req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 
     const webhookPath = '/telegram-webhook';
-    app.post(webhookPath, webhookCallback(bot, 'express'));
+    app.post(webhookPath, webhookCallback(bot, 'express', { timeoutMilliseconds: 60000 }));
 
     app.listen(PORT, '0.0.0.0', async () => {
       console.log(`[bot] Express server listening on port ${PORT}`);

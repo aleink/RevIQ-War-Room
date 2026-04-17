@@ -227,7 +227,11 @@ async function downloadTelegramFile(ctx, fileId, overrideMime = null) {
       mp4: 'video/mp4', mpeg: 'video/mpeg', mov: 'video/quicktime',
       avi: 'video/x-msvideo', webm: 'video/webm',
     };
-    const mimeType = overrideMime || MIME_MAP[ext] || 'application/octet-stream';
+    const mimeType = overrideMime || MIME_MAP[ext];
+    if (!mimeType || mimeType === 'application/octet-stream') {
+      console.warn(`[utils] Skipping unsupported file type: .${ext} (${overrideMime || 'no override'})`);
+      return null;
+    }
 
     return { 
       inlineData: {
@@ -289,6 +293,27 @@ function extractFileInfo(msg) {
   return null;
 }
 
+/**
+ * Sanitize Markdown for Telegram — fix unclosed entities that cause
+ * "can't parse entities" 400 errors.
+ */
+function sanitizeMarkdown(text) {
+  if (!text) return text;
+  // Count occurrences of unescaped formatting chars
+  const chars = ['*', '_', '`'];
+  for (const ch of chars) {
+    const regex = ch === '*' ? /(?<!\\)\*/g :
+                  ch === '_' ? /(?<!\\)_/g :
+                               /(?<!\\)`/g;
+    const matches = text.match(regex);
+    if (matches && matches.length % 2 !== 0) {
+      // Odd count = unclosed entity — append closing char
+      text += ch;
+    }
+  }
+  return text;
+}
+
 module.exports = {
   formatTask,
   formatTasksByAssignee,
@@ -307,4 +332,5 @@ module.exports = {
   downloadTelegramFile,
   processMessageAttachment,
   formatTasksForAI,
+  sanitizeMarkdown,
 };
